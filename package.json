@@ -1,0 +1,36 @@
+{
+  "name": "mzir",
+  "version": "0.0.1",
+  "description": "Control meizu meijia ble to IR gadget",
+  "main": "built/index.js",
+  "scripts": {
+    "prebuild": "rimraf ./build",
+    "build": "tsc",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/smarthomefans/mzir.git"
+  },
+  "keywords": [
+    "meizu",
+    "meijia",
+    "ble",
+    "IR"
+  ],
+  "author": "SchumyHao",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/smarthomefans/mzir/issues"
+  },
+  "homepage": "https://github.com/smarthomefans/mzir#readme",
+  "devDependencies": {
+    "@types/noble": "0.0.39",
+    "@types/node": "^12.0.4",
+    "rimraf": "^2.6.3",
+    "typescript": "^3.5.1"
+  },
+  "dependencies": {
+    "@abandonware/noble": "^1.9.2-2"
+  }
+}
