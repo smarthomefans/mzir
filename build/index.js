@@ -1,4 +1,17 @@
 "use strict";
+var __extends = (this && this.__extends) || (function () {
+    var extendStatics = function (d, b) {
+        extendStatics = Object.setPrototypeOf ||
+            ({ __proto__: [] } instanceof Array && function (d, b) { d.__proto__ = b; }) ||
+            function (d, b) { for (var p in b) if (b.hasOwnProperty(p)) d[p] = b[p]; };
+        return extendStatics(d, b);
+    };
+    return function (d, b) {
+        extendStatics(d, b);
+        function __() { this.constructor = d; }
+        d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
+    };
+})();
 var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
     return new (P || (P = Promise))(function (resolve, reject) {
         function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
@@ -34,7 +47,11 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
         if (op[0] & 5) throw op[1]; return { value: op[0] ? op[1] : void 0, done: true };
     }
 };
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
+var events_1 = __importDefault(require("events"));
 var noble;
 try {
     noble = require("@abandonware/noble");
@@ -42,19 +59,55 @@ try {
 catch (e) {
     console.log("ERROR: noble module is not exist.");
 }
-var Mzir = /** @class */ (function () {
+var Mzir = /** @class */ (function (_super) {
+    __extends(Mzir, _super);
     function Mzir(mac) {
-        this.id = "";
-        this.uuid = "";
-        this.manufacturer = "";
-        this.model = "";
-        this.firmwareRevision = "";
-        this.softwareRevision = "";
-        this.connected = false;
-        this.temp = 0;
-        this.hum = 0;
-        this.mac = mac;
-        setImmediate(this.discoverDevice);
+        var _this = _super.call(this) || this;
+        _this.id = "";
+        _this.uuid = "";
+        _this.manufacturer = "";
+        _this.model = "";
+        _this.firmwareRevision = "";
+        _this.softwareRevision = "";
+        _this.connected = false;
+        _this.scanning = false;
+        _this.temp = 0;
+        _this.hum = 0;
+        _this.newDataEvent = new events_1.default();
+        _this.mac = mac;
+        noble.on("scanStop", function () {
+            _this.scanning = false;
+            if (_this.id === "") {
+                console.log("Can not discover Meizu BLE IR gadget(" + _this.mac + ")");
+            }
+        });
+        noble.on("scanStart", function () {
+            _this.scanning = true;
+        });
+        noble.on("discover", function (peripheral) {
+            if (peripheral.address && (peripheral.address === _this.mac)) {
+                _this.id = peripheral.id;
+                _this.uuid = peripheral.uuid;
+                _this.mzirPeripheral = peripheral;
+                noble.stopScanning();
+                _this.emit("ready");
+            }
+            if (peripheral.id && (peripheral.id === _this.id)) {
+                // Already discovered device.
+                _this.mzirPeripheral = peripheral;
+                noble.stopScanning();
+                _this.emit("ready");
+            }
+        });
+        noble.on('stateChange', function (state) {
+            if (state === 'poweredOn') {
+                noble.startScanning();
+            }
+            else {
+                noble.stopScanning();
+            }
+        });
+        return _this;
     }
     Mzir.prototype.recvData = function (buf, callback) {
         var header;
@@ -109,7 +162,6 @@ var Mzir = /** @class */ (function () {
         buf = buf.slice(1, buf.length);
         command = recvCommand(buf);
         buf = buf.slice(1, buf.length);
-        console.log("len=" + len + ", commandID=" + commandID + ", command=" + command);
         if (command === "IR_TH_DATA") {
             var data = {};
             data.temp = buf.slice(0, 2).readUInt16LE(0) / 100.0;
@@ -120,252 +172,168 @@ var Mzir = /** @class */ (function () {
         }
         callback(undefined, command, buf);
     };
-    Mzir.prototype.canStopScan = function () {
-        return ((this.manufacturer != "") && (this.model != "") &&
-            (this.firmwareRevision != "") && (this.softwareRevision != ""));
-    };
-    ;
-    Mzir.prototype.discoverDevice = function (callback) {
+    /*
+        private discoverDevice() {
+            if (this.scanning) {
+                return;
+            }
+            console.log("Start scanning.");
+            noble.startScanning();
+            setInterval(() => {
+                noble.stopScanning();
+            }, 10000);
+        }
+    */
+    Mzir.prototype.readDeviceInfoHandler = function (peripheral) {
         var _this = this;
-        noble.on("scanStop", function () {
-            if (_this.id === "") {
-                console.log("Can not discover Meizu BLE IR gadget(" + _this.mac + ")");
-                callback && callback(null);
-            }
-            else {
-                console.log("Found Meizu BLE IR gadget(" + _this.mac + "), ID=" + _this.id);
-            }
-        });
-        noble.on("discover", function (peripheral) {
-            if (peripheral.address && (peripheral.address === _this.mac)) {
-                _this.id = peripheral.id;
-                _this.uuid = peripheral.uuid;
-                noble.stopScanning();
-                callback && callback(peripheral);
-            }
-            if (peripheral.id && (peripheral.id === _this.id)) {
-                // Already discovered device.
-                noble.stopScanning();
-                callback && callback(peripheral);
-            }
-            else {
-                // Mac address is not set or can not read Mac address.
-                if (peripheral.connectable) {
-                    peripheral.connect(function () {
-                        peripheral.discoverAllServicesAndCharacteristics(function (err, services) {
-                            if (err) {
-                                console.log("ERROR: " + err);
-                                return;
-                            }
-                            for (var i = 0; i < services.length; i++) {
-                                var service = services[i];
-                                if (service.name === "Device Information") {
-                                    var _loop_1 = function (j) {
-                                        var char = service.characteristics[j];
-                                        if (char.name === "Manufacturer Name String") {
-                                            char.read(function (err, data) {
-                                                if (err) {
-                                                    console.log("Read " + char.name + " error: " + err);
-                                                }
-                                                else {
-                                                    if (data.toString() === "Meizu") {
-                                                        _this.manufacturer = data.toString();
-                                                        if (_this.model !== "") {
-                                                            _this.connected = true;
-                                                            peripheral.on("disconnect", function () {
-                                                                _this.connected = false;
-                                                            });
-                                                            _this.id = peripheral.id;
-                                                            _this.uuid = peripheral.uuid;
-                                                        }
-                                                        if (_this.canStopScan()) {
-                                                            noble.stopScanning();
-                                                            callback && callback(peripheral);
-                                                        }
-                                                    }
-                                                }
-                                            });
+        if (!peripheral) {
+            console.log("ERROR: Cannot find Meizu BLE IR gadget(" + this.mac + ")");
+        }
+        else {
+            peripheral.once("disconnect", function () {
+                _this.connected = false;
+            });
+            peripheral.once("connect", function () {
+                _this.connected = true;
+            });
+            peripheral.connect(function () {
+                peripheral.discoverAllServicesAndCharacteristics(function (err, services) {
+                    if (err) {
+                        console.log("ERROR: " + err);
+                        return;
+                    }
+                    for (var i = 0; i < services.length; i++) {
+                        var service = services[i];
+                        if (service.name === "Device Information") {
+                            var _loop_1 = function (j) {
+                                var char = service.characteristics[j];
+                                if (char.name === "Manufacturer Name String") {
+                                    char.read(function (err, data) {
+                                        if (err) {
+                                            console.log("Read " + char.name + " error: " + err);
                                         }
-                                        if (char.name === "Model Number String") {
-                                            char.read(function (err, data) {
-                                                if (err) {
-                                                    console.log("Read " + char.name + " error: " + err);
-                                                }
-                                                else {
-                                                    if (data.toString() === "R16") {
-                                                        _this.model = data.toString();
-                                                        if (_this.manufacturer !== "") {
-                                                            _this.connected = true;
-                                                            peripheral.on("disconnect", function () {
-                                                                _this.connected = false;
-                                                            });
-                                                            _this.id = peripheral.id;
-                                                            _this.uuid = peripheral.uuid;
-                                                        }
-                                                        if (_this.canStopScan()) {
-                                                            noble.stopScanning();
-                                                            callback && callback(peripheral);
-                                                        }
-                                                    }
-                                                }
-                                            });
+                                        else {
+                                            _this.manufacturer = data.toString();
                                         }
-                                        if (char.name === "Firmware Revision String") {
-                                            char.read(function (err, data) {
-                                                if (err) {
-                                                    console.log("Read " + char.name + " error: " + err);
-                                                }
-                                                else {
-                                                    _this.firmwareRevision = data.toString();
-                                                    if (_this.canStopScan()) {
-                                                        noble.stopScanning();
-                                                        callback && callback(peripheral);
-                                                    }
-                                                }
-                                            });
-                                        }
-                                        if (char.name === "Software Revision String") {
-                                            char.read(function (err, data) {
-                                                if (err) {
-                                                    console.log("Read " + char.name + " error: " + err);
-                                                }
-                                                else {
-                                                    _this.softwareRevision = data.toString();
-                                                    if (_this.canStopScan()) {
-                                                        noble.stopScanning();
-                                                        callback && callback(peripheral);
-                                                    }
-                                                }
-                                            });
-                                        }
-                                    };
-                                    for (var j = 0; j < service.characteristics.length; j++) {
-                                        _loop_1(j);
-                                    }
+                                    });
                                 }
+                                if (char.name === "Model Number String") {
+                                    char.read(function (err, data) {
+                                        if (err) {
+                                            console.log("Read " + char.name + " error: " + err);
+                                        }
+                                        else {
+                                            _this.model = data.toString();
+                                        }
+                                    });
+                                }
+                                if (char.name === "Firmware Revision String") {
+                                    char.read(function (err, data) {
+                                        if (err) {
+                                            console.log("Read " + char.name + " error: " + err);
+                                        }
+                                        else {
+                                            _this.firmwareRevision = data.toString();
+                                        }
+                                    });
+                                }
+                                if (char.name === "Software Revision String") {
+                                    char.read(function (err, data) {
+                                        if (err) {
+                                            console.log("Read " + char.name + " error: " + err);
+                                        }
+                                        else {
+                                            _this.softwareRevision = data.toString();
+                                        }
+                                    });
+                                }
+                            };
+                            for (var j = 0; j < service.characteristics.length; j++) {
+                                _loop_1(j);
                             }
-                        });
-                    });
-                }
-            }
-        });
-        noble.startScanning();
-        setInterval(function () {
-            noble.stopScanning();
-        }, 10000);
+                        }
+                    }
+                });
+            });
+        }
+    };
+    Mzir.prototype.readDeviceInfo = function () {
+        if (!this.mzirPeripheral) {
+            console.log("ERROR: Device not discovered yet.");
+            return;
+        }
+        this.readDeviceInfoHandler(this.mzirPeripheral);
+    };
+    Mzir.prototype.readTHDataHandler = function (peripheral) {
+        var _this = this;
+        if (!peripheral) {
+            console.log("ERROR: Cannot find Meizu BLE IR gadget(" + this.mac + ")");
+        }
+        else {
+            peripheral.on("disconnect", function () {
+                _this.connected = false;
+            });
+            peripheral.on("connect", function () {
+                _this.connected = true;
+            });
+            peripheral.connect(function () {
+                peripheral.discoverAllServicesAndCharacteristics(function (err, services) {
+                    if (err) {
+                        console.log("ERROR: " + err);
+                        return;
+                    }
+                    for (var i = 0; i < services.length; i++) {
+                        var service = services[i];
+                        if (service.uuid === "16f0") {
+                            var _loop_2 = function (j) {
+                                var char = service.characteristics[j];
+                                if (char.uuid === "16f2") {
+                                    // VIP
+                                    char.read(function (err, buff) {
+                                        if (err) {
+                                            console.log("ERROR: Read " + char.name + " error: " + err);
+                                        }
+                                        else {
+                                            _this.recvData(buff, function (err, command, data) {
+                                                if (err) {
+                                                    console.log("ERROR: Read Invalid data: " + err);
+                                                }
+                                                else {
+                                                    if ((command === "IR_TH_DATA") && data) {
+                                                        _this.temp = data.temp;
+                                                        _this.hum = data.hum;
+                                                        _this.newDataEvent.emit("data");
+                                                    }
+                                                }
+                                            });
+                                        }
+                                    });
+                                }
+                            };
+                            for (var j = 0; j < service.characteristics.length; j++) {
+                                _loop_2(j);
+                            }
+                        }
+                    }
+                });
+            });
+        }
     };
     Mzir.prototype.readData = function (type, callback) {
-        var _this = this;
+        if (!this.mzirPeripheral) {
+            console.log("ERROR: Device not discovered yet.");
+            return;
+        }
         if (type === "TH") {
-            this.discoverDevice(function (peripheral) {
-                if (!peripheral) {
-                    callback("ERROR: Cannot find Meizu BLE IR gadget(" + _this.mac + ")");
-                }
-                else {
-                    if (!_this.connected) {
-                        peripheral.on("disconnect", function () {
-                            _this.connected = false;
-                        });
-                        peripheral.on("connect", function () {
-                            _this.connected = true;
-                        });
-                        peripheral.connect(function () {
-                            peripheral.discoverAllServicesAndCharacteristics(function (err, services) {
-                                if (err) {
-                                    callback("ERROR: " + err);
-                                    return;
-                                }
-                                for (var i = 0; i < services.length; i++) {
-                                    var service = services[i];
-                                    if (service.uuid === "16f0") {
-                                        var _loop_2 = function (j) {
-                                            var char = service.characteristics[j];
-                                            if (char.uuid === "16f2") {
-                                                // VIP
-                                                char.read(function (err, buff) {
-                                                    if (err) {
-                                                        callback("Read " + char.name + " error: " + err);
-                                                    }
-                                                    else {
-                                                        _this.recvData(buff, function (err, command, data) {
-                                                            if (err) {
-                                                                callback("ERROR: Read Invalid data: " + err);
-                                                            }
-                                                            else {
-                                                                if ((command === "IR_TH_DATA") && data) {
-                                                                    _this.temp = data.temp;
-                                                                    _this.hum = data.hum;
-                                                                    callback();
-                                                                }
-                                                            }
-                                                        });
-                                                    }
-                                                });
-                                            }
-                                        };
-                                        for (var j = 0; j < service.characteristics.length; j++) {
-                                            _loop_2(j);
-                                        }
-                                    }
-                                }
-                            });
-                        });
-                    }
-                    else {
-                        peripheral.discoverAllServicesAndCharacteristics(function (err, services) {
-                            if (err) {
-                                callback("ERROR: " + err);
-                                return;
-                            }
-                            for (var i = 0; i < services.length; i++) {
-                                var service = services[i];
-                                if (service.uuid === "16f0") {
-                                    var _loop_3 = function (j) {
-                                        var char = service.characteristics[j];
-                                        if (char.uuid === "16f2") {
-                                            // VIP
-                                            char.read(function (err, buff) {
-                                                if (err) {
-                                                    callback("Read " + char.name + " error: " + err);
-                                                }
-                                                else {
-                                                    _this.recvData(buff, function (err, command, data) {
-                                                        if (err) {
-                                                            callback("ERROR: Read Invalid data: " + err);
-                                                        }
-                                                        else {
-                                                            if ((command === "IR_TH_DATA") && data) {
-                                                                _this.temp = data.temp;
-                                                                _this.hum = data.hum;
-                                                                callback();
-                                                            }
-                                                        }
-                                                    });
-                                                }
-                                            });
-                                        }
-                                    };
-                                    for (var j = 0; j < service.characteristics.length; j++) {
-                                        _loop_3(j);
-                                    }
-                                }
-                            }
-                        });
-                    }
-                }
-            });
+            this.newDataEvent.once("data", callback);
+            this.readTHDataHandler(this.mzirPeripheral);
         }
     };
     Mzir.prototype.readDataAsync = function (type) {
         var _this = this;
         return new Promise(function (resolve, reject) {
-            _this.readData(type, function (err) {
-                if (err) {
-                    reject(err);
-                }
-                else {
-                    resolve();
-                }
+            _this.readData(type, function () {
+                resolve();
             });
         });
     };
@@ -394,5 +362,5 @@ var Mzir = /** @class */ (function () {
         });
     };
     return Mzir;
-}());
+}(events_1.default));
 exports.Mzir = Mzir;

@@ -1,4 +1,5 @@
 import * as Noble from "noble";
+import EventEmitter from "events";
 let noble: typeof import("noble");
 
 try {
@@ -7,7 +8,7 @@ try {
     console.log("ERROR: noble module is not exist.");
 }
 
-export class Mzir {
+export class Mzir extends EventEmitter {
     private mac: string;
     private id: string = "";
     private uuid: string = "";
@@ -16,12 +17,46 @@ export class Mzir {
     private firmwareRevision: string = "";
     private softwareRevision: string = "";
     private connected: boolean = false;
+    private scanning: boolean = false;
     private temp: number = 0;
     private hum: number = 0;
+    private mzirPeripheral?: Noble.Peripheral;
+    private newDataEvent: EventEmitter = new EventEmitter();
 
     public constructor(mac: string) {
+        super();
         this.mac = mac;
-        setImmediate(this.discoverDevice);
+
+        noble.on("scanStop", () => {
+            this.scanning = false;
+            if (this.id === "") {
+                console.log(`Can not discover Meizu BLE IR gadget(${this.mac})`);
+            }
+        });
+        noble.on("scanStart", () => {
+            this.scanning = true;
+        })
+        noble.on("discover", (peripheral: Noble.Peripheral) => {
+            if (peripheral.address && (peripheral.address === this.mac)) {
+                this.id = peripheral.id;
+                this.uuid = peripheral.uuid;
+                this.mzirPeripheral = peripheral;
+                noble.stopScanning();
+                this.emit("ready");
+            } if (peripheral.id && (peripheral.id === this.id)) {
+                // Already discovered device.
+                this.mzirPeripheral = peripheral;
+                noble.stopScanning();
+                this.emit("ready");
+            }
+        });
+        noble.on('stateChange', (state) => {
+            if (state === 'poweredOn') {
+                noble.startScanning();
+            } else {
+                noble.stopScanning();
+            }
+        });
     }
 
     private recvData(buf: Buffer, callback: (err?: string, cmd?: string, data?: any) => void) {
@@ -87,8 +122,6 @@ export class Mzir {
         command = recvCommand(buf);
         buf = buf.slice(1, buf.length);
 
-        console.log(`len=${len}, commandID=${commandID}, command=${command}`);
-
         if (command === "IR_TH_DATA") {
             const data: Record<string, number> = {};
             data.temp = buf.slice(0, 2).readUInt16LE(0) / 100.0;
@@ -101,228 +134,156 @@ export class Mzir {
         callback(undefined, command, buf);
     }
 
-    private canStopScan() {
-        return ((this.manufacturer != "") && (this.model != "") &&
-            (this.firmwareRevision != "") && (this.softwareRevision != ""));
-    };
-
-    private discoverDevice(callback?: (peripheral: Noble.Peripheral|null) => void) {
-        noble.on("scanStop", () => {
-            if (this.id === "") {
-                console.log(`Can not discover Meizu BLE IR gadget(${this.mac})`);
-                callback && callback(null);
-            } else {
-                console.log(`Found Meizu BLE IR gadget(${this.mac}), ID=${this.id}`);
-            }
-        });
-        noble.on("discover", (peripheral: Noble.Peripheral) => {
-            if (peripheral.address && (peripheral.address === this.mac)) {
-                this.id = peripheral.id;
-                this.uuid = peripheral.uuid;
-                noble.stopScanning();
-                callback && callback(peripheral);
-            } if (peripheral.id && (peripheral.id === this.id)) {
-                // Already discovered device.
-                noble.stopScanning();
-                callback && callback(peripheral);
-            } else {
-                // Mac address is not set or can not read Mac address.
-                if (peripheral.connectable) {
-                    peripheral.connect(() => {
-                        peripheral.discoverAllServicesAndCharacteristics((err, services) => {
-                            if (err) {
-                                console.log(`ERROR: ${err}`);
-                                return;
-                            }
-                            for (let i = 0; i < services.length; i++) {
-                                const service = services[i];
-                                if (service.name === "Device Information") {
-                                    for (let j = 0; j < service.characteristics.length; j++) {
-                                        const char = service.characteristics[j];
-                                        if (char.name === "Manufacturer Name String") {
-                                            char.read((err, data) => {
-                                                if (err) {
-                                                    console.log(`Read ${char.name} error: ${err}`);
-                                                } else {
-                                                    if (data.toString() === "Meizu") {
-                                                        this.manufacturer = data.toString();
-                                                        if (this.model !== "") {
-                                                            this.connected = true;
-                                                            peripheral.on("disconnect", () => {
-                                                                this.connected = false;
-                                                            })
-                                                            this.id = peripheral.id;
-                                                            this.uuid = peripheral.uuid;
-                                                        }
-                                                        if (this.canStopScan()) {
-                                                            noble.stopScanning();
-                                                            callback && callback(peripheral);
-                                                        }
-                                                    }
-                                                }
-                                            });
-                                        }
-                                        if (char.name === "Model Number String") {
-                                            char.read((err, data) => {
-                                                if (err) {
-                                                    console.log(`Read ${char.name} error: ${err}`);
-                                                } else {
-                                                    if (data.toString() === "R16") {
-                                                        this.model = data.toString();
-                                                        if (this.manufacturer !== "") {
-                                                            this.connected = true;
-                                                            peripheral.on("disconnect", () => {
-                                                                this.connected = false;
-                                                            })
-                                                            this.id = peripheral.id;
-                                                            this.uuid = peripheral.uuid;
-                                                        }
-                                                        if (this.canStopScan()) {
-                                                            noble.stopScanning();
-                                                            callback && callback(peripheral);
-                                                        }
-                                                    }
-                                                }
-                                            });
-                                        }
-                                        if (char.name === "Firmware Revision String") {
-                                            char.read((err, data) => {
-                                                if (err) {
-                                                    console.log(`Read ${char.name} error: ${err}`);
-                                                } else {
-                                                    this.firmwareRevision = data.toString();
-                                                    if (this.canStopScan()) {
-                                                        noble.stopScanning();
-                                                        callback && callback(peripheral);
-                                                    }
-                                                }
-                                            });
-                                        }
-                                        if (char.name === "Software Revision String") {
-                                            char.read((err, data) => {
-                                                if (err) {
-                                                    console.log(`Read ${char.name} error: ${err}`);
-                                                } else {
-                                                    this.softwareRevision = data.toString();
-                                                    if (this.canStopScan()) {
-                                                        noble.stopScanning();
-                                                        callback && callback(peripheral);
-                                                    }
-                                                }
-                                            });
-                                        }
-                                    }
-                                }
-                            }
-                        })
-                    })
-                }
-            }
-        });
+/*
+    private discoverDevice() {
+        if (this.scanning) {
+            return;
+        }
+        console.log("Start scanning.");
         noble.startScanning();
         setInterval(() => {
             noble.stopScanning();
         }, 10000);
     }
+*/
 
-    private readData(type: "TH", callback: (err?: string)=>void) {
-        if (type === "TH") {
-            this.discoverDevice((peripheral: Noble.Peripheral|null) => {
-                if (!peripheral) {
-                    callback(`ERROR: Cannot find Meizu BLE IR gadget(${this.mac})`);
-                } else {
-                    if (!this.connected) {
-                        peripheral.on("disconnect", () => {
-                            this.connected = false;
-                        })
-                        peripheral.on("connect", () => {
-                            this.connected = true;
-                        })
-                        peripheral.connect(() => {
-                            peripheral.discoverAllServicesAndCharacteristics((err, services) => {
-                                if (err) {
-                                    callback(`ERROR: ${err}`);
-                                    return;
-                                }
-                                for (let i = 0; i < services.length; i++) {
-                                    const service = services[i];
-                                    if (service.uuid === "16f0") {
-                                        for (let j = 0; j < service.characteristics.length; j++) {
-                                            const char = service.characteristics[j];
-                                            if (char.uuid === "16f2") {
-                                                // VIP
-                                                char.read((err, buff: Buffer) => {
-                                                    if (err) {
-                                                        callback(`Read ${char.name} error: ${err}`);
-                                                    } else {
-                                                        this.recvData(buff, (err, command, data) => {
-                                                            if (err) {
-                                                                callback(`ERROR: Read Invalid data: ${err}`);
-                                                            } else {
-                                                                if ((command === "IR_TH_DATA") && data) {
-                                                                    this.temp = data.temp;
-                                                                    this.hum = data.hum;
-                                                                    callback();
-                                                                }
-                                                            }
-                                                        })
-                                                    }
-                                                })
-                                            }
+    private readDeviceInfoHandler(peripheral: Noble.Peripheral) {
+        if (!peripheral) {
+            console.log(`ERROR: Cannot find Meizu BLE IR gadget(${this.mac})`);
+        } else {
+            peripheral.once("disconnect", () => {
+                this.connected = false;
+            })
+            peripheral.once("connect", () => {
+                this.connected = true;
+            })
+            peripheral.connect(() => {
+                peripheral.discoverAllServicesAndCharacteristics((err, services) => {
+                    if (err) {
+                        console.log(`ERROR: ${err}`);
+                        return;
+                    }
+                    for (let i = 0; i < services.length; i++) {
+                        const service = services[i];
+                        if (service.name === "Device Information") {
+                            for (let j = 0; j < service.characteristics.length; j++) {
+                                const char = service.characteristics[j];
+                                if (char.name === "Manufacturer Name String") {
+                                    char.read((err, data) => {
+                                        if (err) {
+                                            console.log(`Read ${char.name} error: ${err}`);
+                                        } else {
+                                            this.manufacturer = data.toString();
                                         }
-                                    }
+                                    });
                                 }
-                            })
-                        })
-                    } else {
-                        peripheral.discoverAllServicesAndCharacteristics((err, services) => {
-                            if (err) {
-                                callback(`ERROR: ${err}`);
-                                return;
+                                if (char.name === "Model Number String") {
+                                    char.read((err, data) => {
+                                        if (err) {
+                                            console.log(`Read ${char.name} error: ${err}`);
+                                        } else {
+                                            this.model = data.toString();
+                                        }
+                                    });
+                                }
+                                if (char.name === "Firmware Revision String") {
+                                    char.read((err, data) => {
+                                        if (err) {
+                                            console.log(`Read ${char.name} error: ${err}`);
+                                        } else {
+                                            this.firmwareRevision = data.toString();
+                                        }
+                                    });
+                                }
+                                if (char.name === "Software Revision String") {
+                                    char.read((err, data) => {
+                                        if (err) {
+                                            console.log(`Read ${char.name} error: ${err}`);
+                                        } else {
+                                            this.softwareRevision = data.toString();
+                                        }
+                                    });
+                                }
                             }
-                            for (let i = 0; i < services.length; i++) {
-                                const service = services[i];
-                                if (service.uuid === "16f0") {
-                                    for (let j = 0; j < service.characteristics.length; j++) {
-                                        const char = service.characteristics[j];
-                                        if (char.uuid === "16f2") {
-                                            // VIP
-                                            char.read((err, buff: Buffer) => {
+                        }
+                    }
+                })
+            })
+        }
+    }
+
+    private readDeviceInfo() {
+        if (!this.mzirPeripheral) {
+            console.log("ERROR: Device not discovered yet.")
+            return;
+        }
+        this.readDeviceInfoHandler(this.mzirPeripheral);
+    }
+
+    private readTHDataHandler(peripheral: Noble.Peripheral) {
+        if (!peripheral) {
+            console.log(`ERROR: Cannot find Meizu BLE IR gadget(${this.mac})`);
+        } else {
+            peripheral.on("disconnect", () => {
+                this.connected = false;
+            })
+            peripheral.on("connect", () => {
+                this.connected = true;
+            })
+            peripheral.connect(() => {
+                peripheral.discoverAllServicesAndCharacteristics((err, services) => {
+                    if (err) {
+                        console.log(`ERROR: ${err}`);
+                        return;
+                    }
+                    for (let i = 0; i < services.length; i++) {
+                        const service = services[i];
+                        if (service.uuid === "16f0") {
+                            for (let j = 0; j < service.characteristics.length; j++) {
+                                const char = service.characteristics[j];
+                                if (char.uuid === "16f2") {
+                                    // VIP
+                                    char.read((err, buff: Buffer) => {
+                                        if (err) {
+                                            console.log(`ERROR: Read ${char.name} error: ${err}`);
+                                        } else {
+                                            this.recvData(buff, (err, command, data) => {
                                                 if (err) {
-                                                    callback(`Read ${char.name} error: ${err}`);
+                                                    console.log(`ERROR: Read Invalid data: ${err}`);
                                                 } else {
-                                                    this.recvData(buff, (err, command, data) => {
-                                                        if (err) {
-                                                            callback(`ERROR: Read Invalid data: ${err}`);
-                                                        } else {
-                                                            if ((command === "IR_TH_DATA") && data) {
-                                                                this.temp = data.temp;
-                                                                this.hum = data.hum;
-                                                                callback();
-                                                            }
-                                                        }
-                                                    })
+                                                    if ((command === "IR_TH_DATA") && data) {
+                                                        this.temp = data.temp;
+                                                        this.hum = data.hum;
+                                                        this.newDataEvent.emit("data");
+                                                    }
                                                 }
                                             })
                                         }
-                                    }
+                                    })
                                 }
                             }
-                        })
+                        }
                     }
-                }
+                })
             })
+        }
+    }
+
+    private readData(type: "TH", callback: () => void) {
+        if (!this.mzirPeripheral) {
+            console.log("ERROR: Device not discovered yet.")
+            return;
+        }
+        if (type === "TH") {
+            this.newDataEvent.once("data", callback)
+            this.readTHDataHandler(this.mzirPeripheral);
         }
     }
 
     private readDataAsync(type: "TH") {
         return new Promise((resolve, reject) => {
-            this.readData(type, (err) => {
-                if (err) {
-                    reject(err);
-                } else {
-                    resolve();
-                }
+            this.readData(type, () => {
+                resolve();
             });
         });
     }
