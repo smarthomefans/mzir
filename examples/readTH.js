@@ -7,5 +7,5 @@ async function demo(mzir) {
     console.log(`Read Meizu BLE IR: temperature=${temp}C, humidity=${hum}%`);
 }
 
-mzir = new Mzir();
+const mzir = new MZIR.Mzir();
 demo(mzir);

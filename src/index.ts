@@ -1,4 +1,11 @@
-import * as noble from "noble";
+import * as Noble from "noble";
+let noble: typeof import("noble");
+
+try {
+    noble = require("@abandonware/noble");
+} catch (e) {
+    console.log("ERROR: noble module is not exist.");
+}
 
 export class Mzir {
     private mac: string;
@@ -99,7 +106,7 @@ export class Mzir {
             (this.firmwareRevision != "") && (this.softwareRevision != ""));
     };
 
-    private discoverDevice(callback?: (peripheral: noble.Peripheral|null) => void) {
+    private discoverDevice(callback?: (peripheral: Noble.Peripheral|null) => void) {
         noble.on("scanStop", () => {
             if (this.id === "") {
                 console.log(`Can not discover Meizu BLE IR gadget(${this.mac})`);
@@ -108,7 +115,7 @@ export class Mzir {
                 console.log(`Found Meizu BLE IR gadget(${this.mac}), ID=${this.id}`);
             }
         });
-        noble.on("discover", (peripheral: noble.Peripheral) => {
+        noble.on("discover", (peripheral: Noble.Peripheral) => {
             if (peripheral.address && (peripheral.address === this.mac)) {
                 this.id = peripheral.id;
                 this.uuid = peripheral.uuid;
@@ -220,7 +227,7 @@ export class Mzir {
 
     private readData(type: "TH", callback: (err?: string)=>void) {
         if (type === "TH") {
-            this.discoverDevice((peripheral: noble.Peripheral|null) => {
+            this.discoverDevice((peripheral: Noble.Peripheral|null) => {
                 if (!peripheral) {
                     callback(`ERROR: Cannot find Meizu BLE IR gadget(${this.mac})`);
                 } else {
